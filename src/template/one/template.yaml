@@ -1,0 +1,265 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  login
+  Sample SAM Template for login
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 128
+    Tracing: Active
+  Api:
+    TracingEnabled: true
+
+Parameters:
+
+# APIGateway Parameter
+  ApiGatewayStage:
+    Type: String
+    Default: prod
+    Description: API Gateway Environment to Deploy onto.
+    AllowedValues:
+      - dev
+      - stage
+      - prod
+    MinLength: 3
+    MaxLength: 6
+
+# API Gateway Name
+  APIGatewayName:
+    Type: String
+    Default: landing-page
+
+# Lambda Function Parameter
+  LambdaFunctionIAMPolicyName:
+    Type: String
+    Default: msk-lambdafunction-policy
+    Description: Lambda Function IAM Policy to Authenticate With Other AWS Services
+    MinLength: 5
+    MaxLength: 50
+
+# Step Function Parameter
+  StepFunctionIAMPolicyName:
+    Type: String
+    Default: msk-stepfunction-policy
+    Description: StepFunction IAM Policy to Authenticate With Other AWS Services
+    MinLength: 5
+    MaxLength: 50
+
+# SQS Queue Name
+  SQSQueueName:
+    Type: String
+    Default: msk-sqs-queue.fifo
+    Description: Define SQS Unique Identifications
+    MinLength: 5
+    MaxLength: 50
+
+# Lambda Function Name
+  LambdaFunctionName:
+    Type: String
+    Default: msk-lambda-function
+    Description: Define lambda function
+    MinLength: 5
+    MaxLength: 50
+
+# Define DynamoDB Table Name
+  DynamoDBTableName:
+    Type: String
+    Default: msk-dynamodb-table
+    Description: Dynamodb Table Name
+    MinLength: 5
+    MaxLength: 50
+
+# Define SNS Topic Name
+  SNSTopicName:
+    Type: String
+    Default: msk-sns-topic
+    Description: SNS topic
+    MinLength: 5
+    MaxLength: 50
+
+Resources:
+
+# Define APIGateway
+  LandingPageAPIGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Ref APIGatewayName
+      StageName: !Ref ApiGatewayStage
+      TracingEnabled: true
+      Tags:
+        Name: Owusu
+        Tier: Dev       
+
+# Define Lambda Function IAM Role
+  LambdaFunctionIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Ref LambdaFunctionIAMPolicyName
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                  - 'sqs:*'
+                  - 'dynamodb:*'
+                  - states:StartExecution
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: Owusu 
+        - Key: Tier
+          Value: Dev
+
+# Define StepFunction IAM Role
+  StepFunctionIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Ref StepFunctionIAMPolicyName
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                  - 'sqs:*'
+                  - 'dynamodb:*'
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: Owusu 
+        - Key: Tier
+          Value: Dev
+
+# Define SQS and Its Policies
+  MySQSQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Ref SQSQueueName
+      FifoQueue: true
+      Tags:
+        - Key: Name
+          Value: Owusu 
+        - Key: Tier
+          Value: Dev
+ 
+  MySqsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref MySQSQueue # Add more sqs queue here
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: "*"
+            Action:
+              - sqs:SendMessage
+              - sqs:ReceiveMessage
+            Resource: "*"
+
+  LambdaToSQSMapping:
+   Type: AWS::Lambda::EventSourceMapping
+   Properties:
+    BatchSize: 10
+    EventSourceArn: !GetAtt MySQSQueue.Arn # Point to SQS Queue
+    FunctionName: !GetAtt MyLambdaFunction.Arn # Point to Lambda Function
+
+# Define Lambda Function
+  MyLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Ref LambdaFunctionName
+      CodeUri: ../../func/one/
+      Handler: app.lambda_handler
+      Runtime: python3.10
+      Architectures:
+      - x86_64
+      Events:
+        LoginApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref LandingPageAPIGateway
+            Path: /login
+            Method: get
+      Role: !GetAtt LambdaFunctionIAMRole.Arn
+      Environment:
+        Variables:
+          Name: Owusu Bright
+          Tier: Dev
+      Tags:
+        Name: Owusu
+        Tier: Dev 
+
+# Define DynamoDB Table
+  DynamoDBTable:
+    Type: AWS::DynamoDB::GlobalTable
+    Properties:
+      TableName: !Ref DynamoDBTableName
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      Replicas:
+        - Region: us-east-1
+          PointInTimeRecoverySpecification:
+            PointInTimeRecoveryEnabled: true
+          Tags:
+            - Key: Name
+              Value: Owusu
+            - Key: Teir
+              Value: Dev
+        - Region: us-east-2
+          PointInTimeRecoverySpecification:
+            PointInTimeRecoveryEnabled: true
+          Tags:
+            - Key: Name
+              Value: Owusu
+            - Key: Region
+              Value: Dev
+
+# Define SNS Topic
+  MySNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: My SNS Topic
+      TopicName: !Ref SNSTopicName
+      Tags:
+        - Key: Name
+          Value: Owusu 
+        - Key: Tier
+          Value: Dev
